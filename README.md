@@ -1,25 +1,18 @@
 # Sublist3r
+> [!NOTE]
+> Esto solo es una modificacion del codigo original de este repo (https://github.com/aboul3la/Sublist3r)
+> Donde se añadió un método para DNS Dumpster que nos permite utilizar la api en vez del scrapping
 
 ![Version](https://img.shields.io/badge/version-1.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-2.7%20%7C%203.x-blue.svg)
 ![License](https://img.shields.io/badge/license-GPL--2.0-green.svg)
 
-Sublist3r es una herramienta de enumeración de subdominios diseñada para penetration testers y profesionales de seguridad. Utiliza múltiples motores de búsqueda y fuentes públicas para descubrir subdominios de un dominio objetivo.
-
-## 🚀 Características
-
-- **Múltiples fuentes**: Consulta varios motores de búsqueda para encontrar subdominios
-- **Bruteforce integrado**: Módulo de fuerza bruta utilizando subbrute
-- **Escaneo de puertos**: Capacidad de escanear puertos TCP en los subdominios encontrados
-- **Multi-threading**: Soporte para múltiples hilos para acelerar el proceso
-- **Rotación de User-Agent**: Evita detección mediante rotación automática de User-Agents
-- **Exportación de resultados**: Guarda los resultados en archivos de texto
-- **Compatible**: Funciona con Python 2.7 y Python 3.x
 
 ## 📋 Requisitos
 
 - Python 2.7 o Python 3.x
 - pip (gestor de paquetes de Python)
+- Es necesario tener una API Key de DNS Dumpster 
 
 ## 🔧 Instalación
 
@@ -38,8 +31,18 @@ pip install -r requirements.txt
 
 O instalar el paquete completo:
 
-```bash path=null start=null
+```
+bash path=null start=null
 python setup.py install
+```
+
+### Configurar la API Key en el entorno
+```
+export DNSDUMPSTER_KEY=tu_api_key
+```
+o
+```
+echo "tu_api_key" > ~/.dnsdumpster_api_key
 ```
 
 ## 💻 Uso
@@ -109,27 +112,6 @@ mail.example.com
 blog.example.com
 ...
 ```
-
-## 🛡️ Características de seguridad
-
-- **Anti-detección**: Rotación automática de User-Agents para evitar bloqueos
-- **Rate limiting**: Control de velocidad de peticiones
-- **Backoff exponencial**: Reintentos inteligentes cuando se detecta rate limiting
-- **Headers realistas**: Utiliza headers de navegadores modernos
-
-## 🤝 Contribución
-
-Las contribuciones son bienvenidas. Por favor:
-
-1. Fork el proyecto
-2. Crea una rama para tu feature (`git checkout -b feature/AmazingFeature`)
-3. Commit tus cambios (`git commit -m 'Add some AmazingFeature'`)
-4. Push a la rama (`git push origin feature/AmazingFeature`)
-5. Abre un Pull Request
-
-## 📝 Licencia
-
-Este proyecto está licenciado bajo GPL-2.0 - ver el archivo LICENSE para más detalles.
 
 ## ⚠️ Disclaimer
 
