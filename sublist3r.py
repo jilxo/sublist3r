@@ -714,7 +714,7 @@ class NetcraftEnum(enumratorBaseThreaded):
 class DNSdumpster(enumratorBaseThreaded):
     def __init__(self, domain, subdomains=None, q=None, silent=False, verbose=True):
         subdomains = subdomains or []
-        self.api_base = 'https://api.dnsdumpster.com/domain/{}'
+        self.api_base = 'https://api.dnsdumpster.com/domain'
         self.live_subdomains = []
         self.engine_name = "DNSdumpster"
         self.q = q
@@ -734,6 +734,13 @@ class DNSdumpster(enumratorBaseThreaded):
                 self.print_(Y + "    Or save it to ~/.dnsdumpster_api_key" + W)
         elif self.verbose:
             self.print_(G + "[-] DNSdumpster: API key configured correctly" + W)
+            
+        # Set custom headers for DNSdumpster API
+        self.headers = {
+            'X-API-Key': self.api_key,
+            'Accept': 'application/json',
+            'User-Agent': 'Sublist3r/1.0'
+        }
         
         return
 
@@ -756,7 +763,12 @@ class DNSdumpster(enumratorBaseThreaded):
             if not k:
                 return False
             k = k.strip()
-            return bool(re.match(r'^[a-f0-9]{64}$', k.lower()))
+            # Check for exactly 64 hexadecimal characters
+            if not re.match(r'^[a-f0-9]{64}$', k.lower()):
+                if self.verbose:
+                    self.print_(R + "[!] Invalid API key format - must be exactly 64 hexadecimal characters" + W)
+                return False
+            return True
         
         # Try environment variables first
         for env_var in ['DNSDUMPSTER_API_KEY', 'DNSDUMPSTER_KEY']:
@@ -775,15 +787,18 @@ class DNSdumpster(enumratorBaseThreaded):
             home = os.path.expanduser('~')
             path = os.path.join(home, '.dnsdumpster_api_key')
             if os.path.exists(path):
-                with open(path, 'r') as f:
+                with open(path, 'r', encoding='utf-8') as f:
                     key = f.read().strip()
+                    if self.verbose:
+                        self.print_(Y + f"[-] Found API key in config file: {key[:8]}..." + W)
                     if is_valid_key(key):
-                        if self.verbose:
-                            self.print_(G + "[-] Using DNSdumpster API key from config file" + W)
+                        self.print_(G + "[-] Using DNSdumpster API key from config file" + W)
                         return key
                     else:
                         if self.verbose:
-                            self.print_(R + "[!] Invalid API key format in config file - must be 64 hex chars" + W)
+                            self.print_(R + "[!] Invalid API key in config file:" + W)
+                            self.print_(R + f"    Found key: {key}" + W)
+                            self.print_(R + "    Key must be exactly 64 hexadecimal characters" + W)
         except Exception as e:
             if self.verbose:
                 self.print_(R + f"[!] Error reading API key file: {str(e)}" + W)
@@ -803,7 +818,7 @@ class DNSdumpster(enumratorBaseThreaded):
         Resolver.nameservers = ['8.8.8.8', '8.8.4.4']
         self.lock.acquire()
         try:
-            ip = Resolver.query(host, 'A')[0].to_text()
+            ip = Resolver.resolve(host, 'A')[0].to_text()
             if ip:
                 if self.verbose:
                     self.print_("%s%s: %s%s" % (R, self.engine_name, W, host))
@@ -820,8 +835,8 @@ class DNSdumpster(enumratorBaseThreaded):
         
         This method requires a valid API key and follows the rate limits:
         - 1 request per 2 seconds
-        - Supports pagination for results
-        - Returns only validated (resolving) subdomains
+        - Supports pagination for results (Plus accounts only)
+        - Returns validated subdomains
         
         Returns:
             list: List of validated subdomains that were found
@@ -831,71 +846,76 @@ class DNSdumpster(enumratorBaseThreaded):
             return self.live_subdomains
 
         self.lock = threading.BoundedSemaphore(value=70)
-        headers = dict(self.headers)
-        headers.update({'X-API-Key': self.api_key})
-        page = 1
-        max_pages = 10  # safety cap to avoid infinite loops
+        
+        try:
+            # Construct the API URL properly
+            url = f"{self.api_base}/{self.domain}"
+            
+            # Apply rate limiting
+            time.sleep(2)  # Respect 1 req/2s limit
+            
+            if self.verbose:
+                self.print_(Y + f"[-] Querying DNSdumpster API: {url}" + W)
+            
+            # Make the API request
+            resp = self.session.get(url, headers=self.headers, timeout=self.timeout)
+            
+            # Handle HTTP errors
+            if resp.status_code == 401:
+                self.print_(R + "[!] DNSdumpster API Error: Invalid credentials" + W)
+                self.print_(Y + "    Please verify your API key at https://dnsdumpster.com" + W)
+                return self.live_subdomains
+            elif resp.status_code == 429:
+                self.print_(R + "[!] DNSdumpster API rate limit exceeded (1 req/2s)" + W)
+                return self.live_subdomains
+            elif resp.status_code != 200:
+                self.print_(R + f"[!] DNSdumpster API Error: HTTP {resp.status_code}" + W)
+                return self.live_subdomains
 
-        while True:
-            url = self.api_base.format(self.domain)
-            if page > 1:
-                url = url + '?page=%d' % page
-
+            # Parse the JSON response
             try:
-                # Apply rate limiting
-                time.sleep(2)  # Respect 1 req/2s limit
-                
-                resp = self.session.get(url, headers=headers, timeout=self.timeout)
-                
-                # Handle HTTP errors
-                if resp.status_code == 401:
-                    self.print_(R + "[!] DNSdumpster API Error: Invalid API key" + W)
-                    break
-                elif resp.status_code == 429:
-                    self.print_(Y + "[!] Rate limit exceeded, waiting 5s..." + W)
-                    time.sleep(5)
+                data = resp.json()
+            except json.JSONDecodeError:
+                self.print_(R + "[!] Failed to parse DNSdumpster API response" + W)
+                return self.live_subdomains
+
+            if isinstance(data, dict) and 'error' in data:
+                self.print_(R + f"[!] DNSdumpster API error: {data['error']}" + W)
+                return self.live_subdomains
+
+            # Process all record types
+            for record_type in ['a', 'cname', 'mx', 'ns']:
+                records = data.get(record_type, [])
+                if not records:
                     continue
-                elif resp.status_code != 200:
-                    self.print_(R + "[!] API Error: HTTP %d" % resp.status_code + W)
-                    break
+                    
+                for record in records:
+                    # Handle both string and dictionary record formats
+                    if isinstance(record, dict):
+                        host = record.get('host', '')
+                    else:
+                        host = str(record)
+                        
+                    if host and host.endswith(self.domain) and host != self.domain:
+                        if host not in self.subdomains:
+                            if self.verbose:
+                                self.print_(G + f"[-] Found: {host}" + W)
+                            self.subdomains.append(host)
 
-                # Parse response
-                try:
-                    data = json.loads(resp.text)
-                except json.JSONDecodeError:
-                    self.print_(R + "[!] Failed to parse API response" + W)
-                    break
+            # Start validation of found subdomains
+            threads = []
+            for subdomain in self.subdomains:
+                t = threading.Thread(target=self.check_host, args=(subdomain,))
+                t.start()
+                threads.append(t)
 
-                if isinstance(data, dict) and 'error' in data:
-                    self.print_(R + "[!] API error: %s" % data.get('error') + W)
-                    break
+            for t in threads:
+                t.join()
 
-                # Extract subdomains from all sections
-                found_any = False
-                for section in ('a', 'cname', 'mx', 'ns'):
-                    items = data.get(section) or []
-                    for it in items:
-                        host = None
-                        if isinstance(it, dict):
-                            host = it.get('host')
-                        elif isinstance(it, str):
-                            host = it
-                            
-                        if host:
-                            host = host.strip()
-                            if host.endswith(self.domain):
-                                if host not in self.subdomains and host != self.domain:
-                                    self.subdomains.append(host)
-                                    found_any = True
+        except Exception as e:
+            self.print_(R + f"[!] Error during enumeration: {str(e)}" + W)
 
-                if not found_any or page >= max_pages:
-                    break
-                
-                page += 1
-
-            except Exception as e:
-                self.print_(R + "[!] Error: %s" % str(e) + W)
-                break
+        return self.live_subdomains
 
         # Validate found subdomains
         threads = []
